@@ -22,6 +22,8 @@ from flask_appbuilder.models.generic import PSModel
 
 import logging
 
+from . import db
+
 logging.basicConfig(format='%(asctime)s:%(levelname)s:%(name)s:%(message)s')
 logging.getLogger().setLevel(logging.DEBUG)
 
@@ -38,7 +40,7 @@ DEFAULT_ADMIN_USER = 'admin'
 DEFAULT_ADMIN_PASSWORD = 'general'
 
 log = logging.getLogger(__name__)
-
+appbuilder = None
 
 class Model1(Model):
     id = Column(Integer, primary_key=True)
@@ -70,23 +72,74 @@ class Model2(Model):
     def field_method(self):
        return "field_method_value"
 
+def build_app():
+    app =  Flask(__name__)
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///'
+    app.config['CSRF_ENABLED'] = False
+    app.config['SECRET_KEY'] = 'thisismyscretkey'
+    app.config['WTF_CSRF_ENABLED'] = False
+
+    db.app = app
+    db.init_app(app)
+    
+    appbuilder = AppBuilder(app, db.session)
+
+app = build_app()
 
 class FlaskTestCase(unittest.TestCase):
+
+    def create_app(self):
+        return app
+    
+        # override pre_setup and post_teardown to add our transaction logic in the correct
+    # location
+    def _pre_setup(self):
+        super(BaseCase, self)._pre_setup()
+        self._start_transaction()
+
+    def _post_teardown(self):
+        try:
+            self._close_transaction()
+        finally:
+            super(BaseCase, self)._post_teardown()
+
+    def _start_transaction(self):
+        # Create a db session outside of the ORM that we can roll back
+        self.connection = db.engine.connect()
+        self.trans = self.connection.begin()
+
+        # bind db.session to that connection, and start a nested transaction
+        db.session = db.create_scoped_session(options={'bind': self.connection})
+        db.session.begin_nested()
+
+        # sets a listener on db.session so that whenever the transaction ends-
+        # commit() or rollback() - it restarts the nested transaction
+        @event.listens_for(db.session, "after_transaction_end")
+        def restart_savepoint(session, transaction):
+            if transaction.nested and not transaction._parent.nested:
+                session.begin_nested()
+
+        self._after_transaction_end_listener = restart_savepoint
+
+    def _close_transaction(self):
+        # Remove listener
+        event.remove(db.session, "after_transaction_end", self._after_transaction_end_listener)
+        # Roll back the open transaction and return the db connection to
+        # the pool
+        db.session.close()
+        db.get_engine(self.app).dispose()
+        self.trans.rollback()
+        self.connection.invalidate()
+
     def setUp(self):
         from flask import Flask
         from flask_appbuilder import AppBuilder
         from flask_appbuilder.models.sqla.interface import SQLAInterface
         from flask_appbuilder.views import ModelView
 
-        self.app = Flask(__name__)
         self.basedir = os.path.abspath(os.path.dirname(__file__))
-        self.app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///'
-        self.app.config['CSRF_ENABLED'] = False
-        self.app.config['SECRET_KEY'] = 'thisismyscretkey'
-        self.app.config['WTF_CSRF_ENABLED'] = False
 
-        self.db = SQLA(self.app)
-        self.appbuilder = AppBuilder(self.app, self.db.session)
+        self.app = build_app()
 
         sess = PSSession()
 
