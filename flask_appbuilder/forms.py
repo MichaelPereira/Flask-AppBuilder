@@ -1,5 +1,5 @@
 import logging
-from flask_wtf import Form
+from flask_wtf import FlaskForm as Form
 from wtforms import (BooleanField, StringField,
                      TextAreaField, IntegerField, FloatField,
                       DateField, DateTimeField, DecimalField)
