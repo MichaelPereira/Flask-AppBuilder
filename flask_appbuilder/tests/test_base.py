@@ -6,8 +6,8 @@ import random
 import datetime
 from sqlalchemy import Column, Integer, String, ForeignKey, Date, Float
 from sqlalchemy.orm import relationship
-from flask import request, session
-from flask_appbuilder import Model, SQLA
+from flask import request, session, Flask
+from flask_appbuilder import Model, SQLA, AppBuilder
 from flask_appbuilder.models.sqla.filters import FilterStartsWith, FilterEqual
 from flask_appbuilder.models.mixins import FileColumn, ImageColumn
 from flask_appbuilder.views import MasterDetailView, CompactCRUDMixin
@@ -22,7 +22,7 @@ from flask_appbuilder.models.generic import PSModel
 
 import logging
 
-from . import db
+from flask_appbuilder.tests.db import db
 
 logging.basicConfig(format='%(asctime)s:%(levelname)s:%(name)s:%(message)s')
 logging.getLogger().setLevel(logging.DEBUG)
@@ -72,6 +72,130 @@ class Model2(Model):
     def field_method(self):
        return "field_method_value"
 
+def setup_appbuilder(appbuilder):
+    from flask import Flask
+    from flask_appbuilder import AppBuilder
+    from flask_appbuilder.models.sqla.interface import SQLAInterface
+    from flask_appbuilder.views import ModelView
+
+    sess = PSSession()
+
+    class PSView(ModelView):
+        datamodel = GenericInterface(PSModel, sess)
+        base_permissions = ['can_list', 'can_show']
+        list_columns = ['UID', 'C', 'CMD', 'TIME']
+        search_columns = ['UID', 'C', 'CMD']
+
+
+    class Model2View(ModelView):
+        datamodel = SQLAInterface(Model2)
+        list_columns = ['field_integer', 'field_float', 'field_string', 'field_method', 'group.field_string']
+        edit_form_query_rel_fields = {'group':[['field_string', FilterEqual, 'G2']]}
+        add_form_query_rel_fields = {'group':[['field_string', FilterEqual, 'G1']]}
+
+    class Model22View(ModelView):
+        datamodel = SQLAInterface(Model2)
+        list_columns = ['field_integer', 'field_float', 'field_string', 'field_method', 'group.field_string']
+        add_exclude_columns = ['excluded_string']
+        edit_exclude_columns = ['excluded_string']
+        show_exclude_columns = ['excluded_string']
+
+
+    class Model1View(ModelView):
+        datamodel = SQLAInterface(Model1)
+        related_views = [Model2View]
+        list_columns = ['field_string','field_file']
+
+
+    class Model1CompactView(CompactCRUDMixin, ModelView):
+        datamodel = SQLAInterface(Model1)
+
+
+    class Model1Filtered1View(ModelView):
+        datamodel = SQLAInterface(Model1)
+        base_filters = [['field_string', FilterStartsWith, 'a']]
+
+
+    class Model1MasterView(MasterDetailView):
+        datamodel = SQLAInterface(Model1)
+        related_views = [Model2View]
+
+
+    class Model1Filtered2View(ModelView):
+        datamodel = SQLAInterface(Model1)
+        base_filters = [['field_integer', FilterEqual, 0]]
+
+
+    class Model2ChartView(ChartView):
+        datamodel = SQLAInterface(Model2)
+        chart_title = 'Test Model1 Chart'
+        group_by_columns = ['field_string']
+
+
+    class Model2GroupByChartView(GroupByChartView):
+        datamodel = SQLAInterface(Model2)
+        chart_title = 'Test Model1 Chart'
+
+        definitions = [
+            {
+                'group':'field_string',
+                'series':[(aggregate_sum,'field_integer',
+                           aggregate_avg, 'field_integer',
+                           aggregate_count,'field_integer')
+                        ]
+            }
+        ]
+
+    class Model2DirectByChartView(DirectByChartView):
+        datamodel = SQLAInterface(Model2)
+        chart_title = 'Test Model1 Chart'
+
+        definitions = [
+            {
+                'group':'field_string',
+                'series':['field_integer','field_float']
+            }
+        ]
+
+    class Model2TimeChartView(TimeChartView):
+        datamodel = SQLAInterface(Model2)
+        chart_title = 'Test Model1 Chart'
+        group_by_columns = ['field_date']
+
+    class Model2DirectChartView(DirectChartView):
+        datamodel = SQLAInterface(Model2)
+        chart_title = 'Test Model1 Chart'
+        direct_columns = {'stat1': ('group', 'field_integer')}
+
+    class Model1MasterView(MasterDetailView):
+        datamodel = SQLAInterface(Model1)
+        related_views = [Model2View]
+
+    class Model1MasterChartView(MasterDetailView):
+        datamodel = SQLAInterface(Model1)
+        related_views = [Model2DirectByChartView]
+
+
+    appbuilder.add_view(Model1View, "Model1", category='Model1')
+    appbuilder.add_view(Model1CompactView, "Model1Compact", category='Model1')
+    appbuilder.add_view(Model1MasterView, "Model1Master", category='Model1')
+    appbuilder.add_view(Model1MasterChartView, "Model1MasterChart", category='Model1')
+    appbuilder.add_view(Model1Filtered1View, "Model1Filtered1", category='Model1')
+    appbuilder.add_view(Model1Filtered2View, "Model1Filtered2", category='Model1')
+    appbuilder.add_view(Model2View, "Model2")
+    appbuilder.add_view(Model22View, "Model22")
+    appbuilder.add_view(Model2View, "Model2 Add", href='/model2view/add')
+    appbuilder.add_view(Model2ChartView, "Model2 Chart")
+    appbuilder.add_view(Model2GroupByChartView, "Model2 Group By Chart")
+    appbuilder.add_view(Model2DirectByChartView, "Model2 Direct By Chart")
+    appbuilder.add_view(Model2TimeChartView, "Model2 Time Chart")
+    appbuilder.add_view(Model2DirectChartView, "Model2 Direct Chart")
+    appbuilder.add_view(PSView, "Generic DS PS View", category='PSView')
+    role_admin = appbuilder.sm.find_role('Admin')
+    appbuilder.sm.add_user('admin','admin','user','admin@fab.org',role_admin,'general')
+
+    return appbuilder
+
 def build_app():
     app =  Flask(__name__)
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///'
@@ -83,8 +207,11 @@ def build_app():
     db.init_app(app)
     
     appbuilder = AppBuilder(app, db.session)
+    setup_appbuilder(appbuilder)
 
-app = build_app()
+    return app, appbuilder
+
+app, appbuilder = build_app()
 
 class FlaskTestCase(unittest.TestCase):
 
@@ -132,133 +259,17 @@ class FlaskTestCase(unittest.TestCase):
         self.connection.invalidate()
 
     def setUp(self):
-        from flask import Flask
-        from flask_appbuilder import AppBuilder
-        from flask_appbuilder.models.sqla.interface import SQLAInterface
-        from flask_appbuilder.views import ModelView
+        
+        
 
         self.basedir = os.path.abspath(os.path.dirname(__file__))
 
-        self.app = build_app()
+        self.app = self.create_app()
+        self.appbuilder = appbuilder
+        self.db = db
+        
 
-        sess = PSSession()
-
-        class PSView(ModelView):
-            datamodel = GenericInterface(PSModel, sess)
-            base_permissions = ['can_list', 'can_show']
-            list_columns = ['UID', 'C', 'CMD', 'TIME']
-            search_columns = ['UID', 'C', 'CMD']
-
-
-        class Model2View(ModelView):
-            datamodel = SQLAInterface(Model2)
-            list_columns = ['field_integer', 'field_float', 'field_string', 'field_method', 'group.field_string']
-            edit_form_query_rel_fields = {'group':[['field_string', FilterEqual, 'G2']]}
-            add_form_query_rel_fields = {'group':[['field_string', FilterEqual, 'G1']]}
-
-        class Model22View(ModelView):
-            datamodel = SQLAInterface(Model2)
-            list_columns = ['field_integer', 'field_float', 'field_string', 'field_method', 'group.field_string']
-            add_exclude_columns = ['excluded_string']
-            edit_exclude_columns = ['excluded_string']
-            show_exclude_columns = ['excluded_string']
-
-
-        class Model1View(ModelView):
-            datamodel = SQLAInterface(Model1)
-            related_views = [Model2View]
-            list_columns = ['field_string','field_file']
-
-
-        class Model1CompactView(CompactCRUDMixin, ModelView):
-            datamodel = SQLAInterface(Model1)
-
-
-        class Model1Filtered1View(ModelView):
-            datamodel = SQLAInterface(Model1)
-            base_filters = [['field_string', FilterStartsWith, 'a']]
-
-
-        class Model1MasterView(MasterDetailView):
-            datamodel = SQLAInterface(Model1)
-            related_views = [Model2View]
-
-
-        class Model1Filtered2View(ModelView):
-            datamodel = SQLAInterface(Model1)
-            base_filters = [['field_integer', FilterEqual, 0]]
-
-
-        class Model2ChartView(ChartView):
-            datamodel = SQLAInterface(Model2)
-            chart_title = 'Test Model1 Chart'
-            group_by_columns = ['field_string']
-
-
-        class Model2GroupByChartView(GroupByChartView):
-            datamodel = SQLAInterface(Model2)
-            chart_title = 'Test Model1 Chart'
-
-            definitions = [
-                {
-                    'group':'field_string',
-                    'series':[(aggregate_sum,'field_integer',
-                               aggregate_avg, 'field_integer',
-                               aggregate_count,'field_integer')
-                            ]
-                }
-            ]
-
-        class Model2DirectByChartView(DirectByChartView):
-            datamodel = SQLAInterface(Model2)
-            chart_title = 'Test Model1 Chart'
-
-            definitions = [
-                {
-                    'group':'field_string',
-                    'series':['field_integer','field_float']
-                }
-            ]
-
-        class Model2TimeChartView(TimeChartView):
-            datamodel = SQLAInterface(Model2)
-            chart_title = 'Test Model1 Chart'
-            group_by_columns = ['field_date']
-
-        class Model2DirectChartView(DirectChartView):
-            datamodel = SQLAInterface(Model2)
-            chart_title = 'Test Model1 Chart'
-            direct_columns = {'stat1': ('group', 'field_integer')}
-
-        class Model1MasterView(MasterDetailView):
-            datamodel = SQLAInterface(Model1)
-            related_views = [Model2View]
-
-        class Model1MasterChartView(MasterDetailView):
-            datamodel = SQLAInterface(Model1)
-            related_views = [Model2DirectByChartView]
-
-
-        self.appbuilder.add_view(Model1View, "Model1", category='Model1')
-        self.appbuilder.add_view(Model1CompactView, "Model1Compact", category='Model1')
-        self.appbuilder.add_view(Model1MasterView, "Model1Master", category='Model1')
-        self.appbuilder.add_view(Model1MasterChartView, "Model1MasterChart", category='Model1')
-        self.appbuilder.add_view(Model1Filtered1View, "Model1Filtered1", category='Model1')
-        self.appbuilder.add_view(Model1Filtered2View, "Model1Filtered2", category='Model1')
-
-        self.appbuilder.add_view(Model2View, "Model2")
-        self.appbuilder.add_view(Model22View, "Model22")
-        self.appbuilder.add_view(Model2View, "Model2 Add", href='/model2view/add')
-        self.appbuilder.add_view(Model2ChartView, "Model2 Chart")
-        self.appbuilder.add_view(Model2GroupByChartView, "Model2 Group By Chart")
-        self.appbuilder.add_view(Model2DirectByChartView, "Model2 Direct By Chart")
-        self.appbuilder.add_view(Model2TimeChartView, "Model2 Time Chart")
-        self.appbuilder.add_view(Model2DirectChartView, "Model2 Direct Chart")
-
-        self.appbuilder.add_view(PSView, "Generic DS PS View", category='PSView')
-        role_admin = self.appbuilder.sm.find_role('Admin')
-        self.appbuilder.sm.add_user('admin','admin','user','admin@fab.org',role_admin,'general')
-
+        
     def tearDown(self):
         self.appbuilder = None
         self.app = None

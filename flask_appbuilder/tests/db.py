@@ -1,1 +1,3 @@
-db = SQLA()
+from flask.ext.sqlalchemy import SQLAlchemy
+
+db = SQLAlchemy()
